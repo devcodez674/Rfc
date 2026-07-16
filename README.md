@@ -4,11 +4,14 @@ RocketFlight is an open-source flight computer firmware designed for model rocke
 Features
 Real-time Sensor Processing: Integrates high-frequency data from IMUs (accelerometer/gyroscope) and barometric pressure sensors.
 
-# State #  Machine Logic: Robust flight state detection (Idle, Boost, Coast, Descent, Recovery).
+# State Machine Logic:
+Robust flight state detection (Idle, Boost, Coast, Descent, Recovery).
 
-# Data # Logging: Records flight telemetry to onboard storage for post-flight analysis.
+# Data Logging:
+Records flight telemetry to onboard storage for post-flight analysis.
 
-# Event # Triggering: Configurable timing and altitude triggers for dual-deployment parachute systems.
+# Event Triggering: 
+Configurable timing and altitude triggers for dual-deployment parachute systems.
 
 # Architecture
 
