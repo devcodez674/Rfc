@@ -4,7 +4,7 @@
 #include <Adafruit_BMP3XX.h>
 #include <Servo.h>
 #include <Adafruit_SPIFlash.h>
-#define SeaLevelPressure_HPA 1023.25
+float SeaLevelPressure_HPA = 1023.25;
 #define PyroChnl1 22 
 #define PyroChnl2 23 
 #define PyroChnl3 24 
@@ -15,12 +15,34 @@
 #define FinServo1 2
 #define FinServo2 3
 #define FinServo3 4
-#define FinServo4 5
+#define FinServo4 5           
 
 struct IMUData {
   float ax, ay, az, gx, gy, gz;
+};
+struct BaroData {
+  float pressure, altitude, temperature;
+};
+struct EstimatedData {
+  float pitch, roll, yaw;
+  float altitude, BatteryVoltage;
+};
+struct FlightLog {
+  //baro data
+  BaroData.pressure, BaroData.altitude, BaroData.temperature;
+  //imu data
+  IMUData.ax, IMUData.ay, IMUData.az, IMUData.gx, IMUData.gy, IMUData.gz;
+  //estimated data
+  EstimatedData.pitch, EstimatedData.roll, EstimatedData.yaw, EstimatedData.altitude, EstimatedData.BatteryVoltage;
+  //state data
+  currentState, currPyroChnl;
+  servoAngle[1], servoAngle[2], servoAngle[3], servoAngle[4], servoAngle[5], servoAngle[6];
+
 }
+FlightLog flightLog;
 IMUData imuData;
+BaroData baroData;
+EstimatedData estimatedData;
 enum flightState {
   stateIdle,
   stateCalibration,
@@ -50,28 +72,38 @@ flightState currentState = stateIdle;
 unsigned long launchStart = 0;
 float altitude, pressure;
 int CurrPyroChnl = 0;
-//PID
+unsigned long now = 0;
+unsigned long lastIMURead = 0;
+unsigned long lastSlowRead = 0;
 
 // Track output state of pyro channels separately (can't digitalRead OUTPUT pins reliably)
 bool pyroChnlState[5] = {false, false, false, false, false};
+int servoAngle[6];
 
-// Send a CSV data packet to the BlackBox over Serial1
-// Format: $timestamp,state,ax,ay,az,gx,gy,gz,pressure,altitude,battery,pyroChnl\n
-void sendToBlackBox(unsigned long timestamp) {
-  int BatteryRaw = analogRead(A0);
-  Serial1.print('$');
-  Serial1.print(timestamp);      Serial1.print(',');
-  Serial1.print(currentState);   Serial1.print(',');
-  Serial1.print(ax, 4);          Serial1.print(',');
-  Serial1.print(ay, 4);          Serial1.print(',');
-  Serial1.print(az, 4);          Serial1.print(',');
-  Serial1.print(gx, 4);          Serial1.print(',');
-  Serial1.print(gy, 4);          Serial1.print(',');
-  Serial1.print(gz, 4);          Serial1.print(',');
-  Serial1.print(pressure, 2);    Serial1.print(',');
-  Serial1.print(altitude, 2);    Serial1.print(',');
-  Serial1.print(BatteryRaw);     Serial1.print(',');
-  Serial1.println(CurrPyroChnl);
+// Format: $timestamp,state,ax,ay,az,gx,gy,gz,pitch,roll,yaw,pressure,altitude,battery,pyroChnl,servoAngle[1],servoAngle[2],servoAngle[3],servoAngle[4],servoAngle[5],servoAngle[6]\n
+void sendToBlackbox(unsigned long timestamp){
+
+}
+void firePyro(int num){
+  switch(num){
+    case 1: digitalWrite(PyroChnl1, HIGH); pyroChnlState[1] = true; break;
+    case 2: digitalWrite(PyroChnl2, HIGH); pyroChnlState[2] = true; break;
+    case 3: digitalWrite(PyroChnl3, HIGH); pyroChnlState[3] = true; break;
+    case 4: digitalWrite(PyroChnl4, HIGH); pyroChnlState[4] = true; break;
+    default: break;
+  }
+}
+void WriteServos(int angle, int num){
+  angle = constrain(angle, 70, 110);
+  servoAngle[num] = angle;
+  switch(num){
+    case 1: servoCanard1.write(angle);  break;
+    case 2: servoCanard2.write(angle);  break;
+    case 3: servoFin1.write(angle);  break;
+    case 4: servoFin2.write(angle);  break;
+    case 5: servoFin3.write(angle);  break;
+    case 6: servoFin4.write(angle);  break;
+  }
 }
 void readIMUat5ms(){
    if (now - lastIMURead >= 5) {
@@ -104,10 +136,7 @@ void readIMU() {
 
 // renamed from stateArmed() to handleArmed() to avoid conflict with enum value stateArmed
 void handleArmed() {
-  static unsigned long lastIMURead = 0;
-  static unsigned long lastSlowRead = 0;
-
-  unsigned long now = millis();
+  now = millis();
 
   // --- IMU at 200Hz (every 5ms) ---
   readIMUat5ms();
@@ -128,15 +157,32 @@ void handleArmed() {
 
 // renamed from stateAscent() to handleAscent() to avoid conflict with enum value stateAscent
 void handleAscent() {
-  static unsigned long lastIMURead = 0;
-  static unsigned long lastSlowRead = 0;
-
-  unsigned long now = millis();
+  now = millis();
 
   // --- IMU at 200Hz (every 5ms) ---
   readIMUat5ms();
   // --- Baro + BlackBox TX at 50ms (20Hz) ---
   slowTasks();
+}
+
+void handleCalibration() {
+  now = millis();
+  
+  // --- IMU at 200Hz (every 5ms) ---
+  readIMUat5ms();
+  
+  // --- Baro + BlackBox TX at 50ms (20Hz) ---
+  if (now - lastSlowRead >= 50) {
+    lastSlowRead = now;
+
+    if (BARO.performReading()) {
+      pressure = BARO.pressure / 100.0f;
+      SeaLevelPressure_HPA = pressure;
+      altitude = BARO.readAltitude(SeaLevelPressure_HPA);
+    }
+
+    sendToBlackBox(now);
+  }
 }
 
 void setup() {
@@ -178,6 +224,16 @@ void setup() {
   BARO.setTemperatureOversampling(BMP3_OVERSAMPLING_8X);
   BARO.setPressureOversampling(BMP3_OVERSAMPLING_4X);
   BARO.setIIRFilterCoeff(BMP3_IIR_FILTER_COEFF_3);
+
+  // Initial barometer calibration to establish starting ground pressure reference
+  delay(100);
+  for (int i = 0; i < 10; i++) {
+    BARO.performReading();
+    delay(10);
+  }
+  if (BARO.performReading()) {
+    SeaLevelPressure_HPA = BARO.pressure / 100.0f;
+  }
 }
 
 void loop() {
@@ -198,6 +254,9 @@ void loop() {
   }
 
   switch (currentState) {
+    case stateCalibration:
+      handleCalibration();
+      break;
     case stateArmed:
       handleArmed();
       break;
@@ -205,9 +264,9 @@ void loop() {
       handleAscent();
       break;
     case stateTest:
-    if (Test == 1 && currentState == stateCalibration) {
-      handleTest();
-    }
+      if (Test == 1 && currentState == stateCalibration) {
+        handleTest();
+      }
       break;
     default:
       break;
